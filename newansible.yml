@@ -1,0 +1,101 @@
+---
+- hosts: local
+  connection: local
+  gather_facts: False
+  vars:
+    instance_type: t3a.micro
+    security_group: vpns_sg
+    image: ami-068663a3c619dd892
+    keypair: mykey 
+    region: us-east-1
+    count: 1
+  vars_files:
+    - aws_keys.yml
+
+  tasks:
+    - name: Create a security group
+      ec2_group:
+        name: "{{ security_group }}"
+        description: The vpn security group
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+          - proto: udp
+            from_port: 51820
+            to_port: 51820
+            cidr_ip: 0.0.0.0/0
+        rules_egress:
+          - proto: all
+            cidr_ip: 0.0.0.0/0
+
+    - name: Launch the new EC2 Instance
+      ec2:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        group: "{{ security_group }}"
+        instance_type: "{{ instance_type }}"
+        image: "{{ image }}"
+        wait: true 
+        region: "{{ region }}"
+        keypair: "{{ keypair }}"
+        count: "{{count}}"
+      register: ec2
+
+    - name: Add the newly created host so that we can further contact it
+      add_host:
+        name: "{{ item.public_ip }}"
+        groups: vpns
+      with_items: "{{ ec2.instances }}"
+
+    - name: Add tag to Instance(s)
+      ec2_tag:
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        resource: "{{ item.id }}" 
+        region: "{{ region }}" 
+        state: "present"
+      with_items: "{{ ec2.instances }}"
+      args:
+        tags:
+          Type: vpn
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ item.public_ip }}"
+        port: 22 
+        state: started 
+      with_items: "{{ ec2.instances }}"
+
+- hosts: vpns
+  remote_user: ubuntu
+  become: yes
+  gather_facts: no
+
+- name: Install wireguard
+  hosts: local
+  connection: local
+
+  tasks:
+
+  - name: Update and upgrade apt packages
+    become: true
+    apt:
+      upgrade: yes
+      update_cache: yes
+  - name: 1. Install wireguard
+    become: yes
+    apt: 
+      name: wireguard
+      update_cache: yes
+  - name: 2. Install qr
+    become: yes
+    apt: 
+      name: qrencode
+      update_cache: yes
+  - name: 4. run script
+    script: umask 077 wg genkey > privatekey wg pubkey < privatekey > publickey

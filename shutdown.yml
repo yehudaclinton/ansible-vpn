@@ -1,0 +1,21 @@
+
+- hosts: local
+  connection: local
+  vars:
+    region: us-east-1
+  tasks:
+
+  - name: Get EC2 info
+    ec2_instance_facts:
+      region: "{{ region }}"
+      filters:
+        "tag:Name": "vpn"
+    register: ec2
+  - debug: var=ec2
+
+  - name: ShutDown the EC2 Instance
+    ec2:
+      instance_ids: "{{ ec2.instances[0].instance_id }}"
+      state: absent
+      region: "{{ region }}"
+
